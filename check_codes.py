@@ -1,10 +1,10 @@
 import os
+import re
 import json
 import urllib.request
 import urllib.parse
 from datetime import datetime
 
-# URLs de los Webhooks de Discord (pueden ser leídas de variables de entorno)
 WEBHOOKS = {
     "genshin": os.getenv("WEBHOOK_GENSHIN", "https://discord.com/api/webhooks/1562205339426885742/ZUQv__odlL-04L4kJZ9NTt61Z4cQUb7v3091iYat75JKkc3lrpa1Z4mpIZfNqJJjG290"),
     "wuwa": os.getenv("WEBHOOK_WUWA", "https://discord.com/api/webhooks/1562205342467756195/KKnQpZbdOLQHtkhmPSP8sLHp5yDtMe_fi-ZCfR9o018fLiyLYouiuLfpgvn-mJn1HuUo"),
@@ -62,63 +62,79 @@ def send_code_to_discord(game_key, game_name, code, reward, direct_url, color):
     except Exception as e:
         print(f"[!] Error publicando en Discord: {e}")
 
-def fetch_reddit_codes(subreddit, game_name):
-    """Consulta la API pública de Reddit para detectar códigos nuevos de la comunidad."""
+def fetch_wiki_codes(wiki_slug, game_key):
+    """Consulta las wikis oficiales de Fandom donde los moderadores mantienen tablas de códigos activos."""
+    url = f"https://{wiki_slug}.fandom.com/api.php?action=parse&page=Promotional_Code&prop=wikitext&format=json"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+    found = []
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            wikitext = data.get("parse", {}).get("wikitext", {}).get("*", "")
+            # Buscar patrones de códigos en plantillas wiki {{Code|XYZ}} o tablas
+            matches = re.findall(r"\{\{Code\|([A-Za-z0-9]+)\}\}", wikitext)
+            for m in matches:
+                clean = m.strip().upper()
+                if 4 <= len(clean) <= 20:
+                    found.append(clean)
+    except Exception as e:
+        print(f"[!] Fandom check ({game_key}): {e}")
+    return list(set(found))
+
+def fetch_reddit_codes(subreddit):
+    """Consulta la API de Reddit en los subreddits oficiales filtrando por códigos."""
     url = f"https://www.reddit.com/r/{subreddit}/search.json?q=flair%3A%22Codes%22+OR+flair%3A%22Code%22+OR+title%3A%22Code%22&sort=new&restrict_sr=on&limit=5"
-    req = urllib.request.Request(url, headers={"User-Agent": "GachynCodeBot/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) GachynCodeBot/2.0"})
     found_codes = []
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             posts = data.get("data", {}).get("children", [])
             for p in posts:
                 title = p.get("data", {}).get("title", "")
                 selftext = p.get("data", {}).get("selftext", "")
-                # Extraer posibles códigos de palabras en mayúsculas de 6 a 16 caracteres
-                words = (title + " " + selftext).replace(":", " ").replace(",", " ").split()
+                words = re.findall(r"\b[A-Z0-9]{6,16}\b", title + " " + selftext)
                 for w in words:
-                    cleaned = "".join([c for c in w if c.isalnum()]).upper()
-                    if 6 <= len(cleaned) <= 18 and cleaned.isupper() and any(c.isalpha() for c in cleaned):
-                        if cleaned not in ["GENSHIN", "IMPACT", "WUTHERING", "WAVES", "ZENLESS", "ZONE", "UPDATE", "REDDIT"]:
-                            found_codes.append(cleaned)
+                    if not w.isnumeric() and not w in ["GENSHIN", "IMPACT", "WUTHERING", "WAVES", "ZENLESS", "REDDIT"]:
+                        found_codes.append(w)
     except Exception as e:
-        print(f"[!] Info: Consulta a {subreddit} finalizada ({e})")
+        print(f"[!] Reddit check ({subreddit}): {e}")
     return list(set(found_codes))
 
 def main():
-    print("[*] Iniciando chequeo de códigos en la nube...")
+    print(f"[*] Chequeo de códigos iniciado: {datetime.utcnow().isoformat()}")
     history = load_history()
     new_found = False
 
-    # 1. Genshin
-    genshin_found = fetch_reddit_codes("Genshin_Impact", "Genshin Impact")
-    for code in genshin_found:
+    # 1. Genshin Impact (Wiki Oficial + Reddit)
+    g_codes = set(fetch_wiki_codes("genshin-impact", "genshin") + fetch_reddit_codes("Genshin_Impact"))
+    for code in g_codes:
         if code not in history["genshin"]:
-            send_code_to_discord("genshin", "Genshin Impact", code, "Recompensas oficiales de HoYoverse", f"https://genshin.hoyoverse.com/es/gift?code={code}", 0xe67e22)
+            send_code_to_discord("genshin", "Genshin Impact", code, "Protogemas y materiales oficiales", f"https://genshin.hoyoverse.com/es/gift?code={code}", 0xe67e22)
             history["genshin"].append(code)
             new_found = True
 
-    # 2. WuWa
-    wuwa_found = fetch_reddit_codes("WutheringWaves", "Wuthering Waves")
-    for code in wuwa_found:
+    # 2. Wuthering Waves (Wiki + Reddit)
+    w_codes = set(fetch_wiki_codes("wutheringwaves", "wuwa") + fetch_reddit_codes("WutheringWaves"))
+    for code in w_codes:
         if code not in history["wuwa"]:
-            send_code_to_discord("wuwa", "Wuthering Waves", code, "Recompensas oficiales de Kuro Games", None, 0x3498db)
+            send_code_to_discord("wuwa", "Wuthering Waves", code, "Astritas y materiales oficiales de Kuro Games", None, 0x3498db)
             history["wuwa"].append(code)
             new_found = True
 
-    # 3. ZZZ
-    zzz_found = fetch_reddit_codes("ZZZ_Official", "Zenless Zone Zero")
-    for code in zzz_found:
+    # 3. Zenless Zone Zero (Wiki + Reddit)
+    z_codes = set(fetch_wiki_codes("zenless-zone-zero", "zzz") + fetch_reddit_codes("ZZZ_Official"))
+    for code in z_codes:
         if code not in history["zzz"]:
-            send_code_to_discord("zzz", "Zenless Zone Zero", code, "Recompensas oficiales de HoYoverse", f"https://zenless.hoyoverse.com/redemption?code={code}", 0x2ecc71)
+            send_code_to_discord("zzz", "Zenless Zone Zero", code, "Policromos y materiales de HoYoverse", f"https://zenless.hoyoverse.com/redemption?code={code}", 0x2ecc71)
             history["zzz"].append(code)
             new_found = True
 
     if new_found:
         save_history(history)
-        print("[✓] Nuevos códigos detectados y guardados en el historial.")
+        print("[✓] Nuevos códigos detectados y guardados.")
     else:
-        print("[*] No hay códigos nuevos por ahora.")
+        print("[*] No se detectaron códigos nuevos en esta iteración.")
 
 if __name__ == "__main__":
     main()
