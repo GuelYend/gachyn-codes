@@ -1,0 +1,31 @@
+name: Gachyn Code Tracker
+
+on:
+  schedule:
+    # Se ejecuta automáticamente cada 30 minutos (24/7)
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Permite ejecutarlo manualmente con un clic si quieres
+
+jobs:
+  check-and-post:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ejecutar detector de códigos
+        run: python check_codes.py
+
+      - name: Guardar historial si hubo códigos nuevos
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add posted_codes.json
+          git commit -m "Auto: Actualizar historial de códigos publicados" || exit 0
+          git push
