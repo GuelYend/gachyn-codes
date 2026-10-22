@@ -20,6 +20,10 @@ jobs:
           python-version: '3.11'
 
       - name: Ejecutar detector de códigos
+        env:
+          WEBHOOK_GENSHIN: ${{ secrets.WEBHOOK_GENSHIN }}
+          WEBHOOK_WUWA: ${{ secrets.WEBHOOK_WUWA }}
+          WEBHOOK_ZZZ: ${{ secrets.WEBHOOK_ZZZ }}
         run: python check_codes.py
 
       - name: Guardar historial si hubo códigos nuevos
